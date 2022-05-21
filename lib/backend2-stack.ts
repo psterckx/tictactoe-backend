@@ -94,28 +94,30 @@ export class Backend2Stack extends Stack {
 
     // Web Socket Game Handler
     const wsHandler = new lambda.Function(this, "WSHandler", {
+      functionName: "tictactoe-ws-handler",
       runtime: lambda.Runtime.NODEJS_14_X,
-      code: lambda.Code.fromAsset("lambda"),
+      code: lambda.Code.fromAsset("lambda", { exclude: [".zip"] }),
       handler: "ws-handler.handler",
       role: wsHandlerRole,
       timeout: Duration.seconds(10),
       environment: {
         wsEndpoint: webSocketStage.callbackUrl,
-        gameTableName: dbbGameTableName
+        gameTableName: dbbGameTableName,
       },
     });
 
     // Web Socket Match (handles the "requestGame" event)
     const matcher = new lambda.Function(this, "matcher", {
+      functionName: "tictactoe-matcher",
       runtime: lambda.Runtime.NODEJS_14_X,
-      code: lambda.Code.fromAsset("lambda"),
+      code: lambda.Code.fromAsset("lambda", { exclude: [".zip"] }),
       handler: "matcher.handler",
       role: matcherRole,
       timeout: Duration.seconds(10),
       environment: {
         wsEndpoint: webSocketStage.callbackUrl,
         queueUrl: matcherQueue.queueUrl,
-        gameTableName: dbbGameTableName
+        gameTableName: dbbGameTableName,
       },
     });
 
@@ -144,6 +146,13 @@ export class Backend2Stack extends Stack {
       integration: new WebSocketLambdaIntegration(
         "RequestGameIntegration",
         matcher
+      ),
+    });
+
+    webSocketApi.addRoute("markSquare", {
+      integration: new WebSocketLambdaIntegration(
+        "MarkSquareIntegration",
+        wsHandler
       ),
     });
 

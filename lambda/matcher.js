@@ -56,35 +56,39 @@ async function addConnectionToQueue(connectionId) {
 }
 
 async function createGame(gameId, players) {
+  const game = {
+    pk: `game#${gameId}`,
+    sk: new Date().toISOString(),
+    players: {
+      player1: {
+        connectionId: players.player1,
+        marker: "X",
+      },
+      player2: {
+        connectionId: players.player2,
+        marker: "O",
+      },
+    },
+    state: {
+      whosTurn: "player1",
+      gameOver: false,
+      winner: null,
+      board: [
+        ["", "", ""],
+        ["", "", ""],
+        ["", "", ""],
+      ],
+    },
+  };
+
   await ddb
     .put({
       TableName: gameTableName,
-      Item: {
-        pk: `game#${gameId}`,
-        sk: new Date().toISOString(),
-        players: {
-          player1: {
-            connectionId: players.player1,
-            marker: "X",
-          },
-          player2: {
-            connectionId: players.player2,
-            marker: "O",
-          },
-        },
-        state: {
-          whosTurn: players.player1,
-          gameOver: false,
-          winner: null,
-          board: [
-            ["", "", ""],
-            ["", "", ""],
-            ["", "", ""],
-          ],
-        },
-      },
+      Item: game,
     })
     .promise();
+
+  return game;
 }
 
 // ! Assumption: users will not disconnect while they are in the queue waiting for a game
@@ -102,13 +106,30 @@ exports.handler = async (event) => {
       // start game
       console.log("START GAME");
       const gameId = nanoid();
-      await Promise.all([
+      const player1 = connectionId; // X
+      const player2 = message.Body; // O
+      const [_, game] = await Promise.all([
         removeConnectionFromQueue(message.ReceiptHandle),
-        createGame(gameId, { player1: connectionId, player2: message.Body }),
+        createGame(gameId, { player1, player2 }),
       ]);
-      await sendMessage([connectionId, message.Body], {
-        event: "START_GAME",
-        gameId,
+      await Promise.all([
+        sendMessage([player1], {
+          event: "START_GAME",
+          gameId,
+          ...game.state,
+          player: "player1",
+          marker: "X",
+        }),
+        sendMessage([player2], {
+          event: "START_GAME",
+          gameId,
+          ...game.state,
+          player: "player2",
+          marker: "O",
+        }),
+      ])
+      await sendMessage([player1], {
+        event: "BEGIN_TURN",
       });
     } else {
       // add user to queue

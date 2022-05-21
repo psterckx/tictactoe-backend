@@ -4,7 +4,11 @@
   "description": "",
   "main": "ws-handler.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "package-no-deps": "zip -ur lambdas.zip ws-handler.js matcher.js",
+    "package": "zip -r lambdas.zip .",
+    "update-wshandler": "aws lambda update-function-code --function-name tictactoe-ws-handler --zip-file fileb://lambdas.zip",
+    "update-matcher": "aws lambda update-function-code --function-name tictactoe-matcher --zip-file fileb://lambdas.zip"
   },
   "keywords": [],
   "author": "",

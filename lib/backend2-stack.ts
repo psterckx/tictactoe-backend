@@ -15,6 +15,9 @@ export class Backend2Stack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
+    const dbbGameTableName = "tictactoe-table";
+
+    // Matching Queue
     const matcherQueue = new sqs.Queue(this, "tictactoe-matcher-queue", {
       queueName: "tictactoe-matcher-queue",
       visibilityTimeout: Duration.seconds(20),
@@ -30,6 +33,7 @@ export class Backend2Stack extends Stack {
       })
     );
 
+    // WS Handler Role
     const wsHandlerRole = new iam.Role(this, "WSHandlerRole", {
       assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
     });
@@ -46,25 +50,24 @@ export class Backend2Stack extends Stack {
       )
     );
 
-    const matcherSqsPolicy = new iam.PolicyDocument({
-      statements: [
-        new iam.PolicyStatement({
-          resources: ["*"],
-          actions: [
-            "sqs:DeleteMessage",
-            "sqs:ReceiveMessage",
-            "sqs:SendMessage",
-            "sqs:GetQueueAttributes",
-          ],
-          effect: iam.Effect.ALLOW,
-        }),
-      ],
-    });
-
+    // Matcher Role
     const matcherRole = new iam.Role(this, "matcherRole", {
       assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
       inlinePolicies: {
-        SqsReadWrite: matcherSqsPolicy,
+        SqsReadWrite: new iam.PolicyDocument({
+          statements: [
+            new iam.PolicyStatement({
+              resources: ["*"],
+              actions: [
+                "sqs:DeleteMessage",
+                "sqs:ReceiveMessage",
+                "sqs:SendMessage",
+                "sqs:GetQueueAttributes",
+              ],
+              effect: iam.Effect.ALLOW,
+            }),
+          ],
+        }),
       },
     });
 
@@ -80,6 +83,7 @@ export class Backend2Stack extends Stack {
       )
     );
 
+    // Web Socket API
     const webSocketApi = new WebSocketApi(this, "tictactoe-websocket-api", {});
 
     const webSocketStage = new WebSocketStage(this, "dev-stage", {
@@ -88,28 +92,34 @@ export class Backend2Stack extends Stack {
       autoDeploy: true,
     });
 
+    // Web Socket Game Handler
     const wsHandler = new lambda.Function(this, "WSHandler", {
       runtime: lambda.Runtime.NODEJS_14_X,
-      code: lambda.Code.fromAsset("lambda", { exclude: ["node_modules"] }),
+      code: lambda.Code.fromAsset("lambda"),
       handler: "ws-handler.handler",
       role: wsHandlerRole,
       timeout: Duration.seconds(10),
       environment: {
         wsEndpoint: webSocketStage.callbackUrl,
+        gameTableName: dbbGameTableName
       },
     });
 
+    // Web Socket Match (handles the "requestGame" event)
     const matcher = new lambda.Function(this, "matcher", {
       runtime: lambda.Runtime.NODEJS_14_X,
-      code: lambda.Code.fromAsset("lambda", { exclude: ["node_modules"] }),
+      code: lambda.Code.fromAsset("lambda"),
       handler: "matcher.handler",
       role: matcherRole,
       timeout: Duration.seconds(10),
       environment: {
         wsEndpoint: webSocketStage.callbackUrl,
-        queueUrl: matcherQueue.queueUrl
+        queueUrl: matcherQueue.queueUrl,
+        gameTableName: dbbGameTableName
       },
     });
+
+    // Add routes to Web Socket API
 
     webSocketApi.addRoute("$connect", {
       integration: new WebSocketLambdaIntegration(
@@ -137,17 +147,20 @@ export class Backend2Stack extends Stack {
       ),
     });
 
-    // const gameTable = new dynamodb.Table(this, "game-table", {
-    //   tableName: "game-table",
-    //   billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-    //   partitionKey: {
-    //     name: "pk",
-    //     type: dynamodb.AttributeType.STRING,
-    //   },
-    //   sortKey: {
-    //     name: "sk",
-    //     type: dynamodb.AttributeType.STRING,
-    //   },
-    // });
+    const gameTable = new dynamodb.Table(this, "game-table", {
+      tableName: dbbGameTableName,
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: {
+        name: "pk",
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: "sk",
+        type: dynamodb.AttributeType.STRING,
+      },
+    });
+
+    gameTable.grantReadWriteData(matcher);
+    gameTable.grantReadWriteData(wsHandler);
   }
 }

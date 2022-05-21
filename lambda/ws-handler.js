@@ -1,6 +1,8 @@
 const aws = require("aws-sdk");
 
-const endpoint = "https://45tiumvni1.execute-api.us-east-1.amazonaws.com/dev";
+const { wsEndpoint } = process.env
+
+const endpoint = wsEndpoint;
 const client = new aws.ApiGatewayManagementApi({ endpoint });
 
 const users = [];
@@ -21,28 +23,6 @@ async function broadcastMessage(ids, body) {
 }
 
 exports.handler = async (event) => {
-  const messages = await sqs
-    .receiveMessage({
-      QueueUrl:
-        "https://sqs.us-east-1.amazonaws.com/878228692056/demo-game-matching-queue-2",
-      MaxNumberOfMessages: 1,
-      WaitTimeSeconds: 2,
-    })
-    .promise();
-
-  await sqs
-    .sendMessage({
-      QueueUrl:
-        "https://sqs.us-east-1.amazonaws.com/878228692056/demo-game-matching-queue-2",
-      MessageBody: `user${Math.floor(Math.random() * 1000)}`,
-    })
-    .promise();
-
-  await sqs.deleteMessage({
-    QueueUrl: "https://sqs.us-east-1.amazonaws.com/878228692056/demo-game-matching-queue-2",
-    ReceiptHandle: "",
-  }).promise();
-
   if (event.requestContext) {
     const connectionId = event.requestContext.connectionId;
     const routeKey = event.requestContext.routeKey;
@@ -62,12 +42,12 @@ exports.handler = async (event) => {
     switch (routeKey) {
       case "$connect":
         console.log("CONNECT");
-        if (users.length > 0) {
-          await broadcastMessage(users, {
-            systemMessage: "Someone has joined the chat.",
-          });
-        }
-        users.push(connectionId);
+        // if (users.length > 0) {
+        //   await broadcastMessage(users, {
+        //     systemMessage: "Someone has joined the chat.",
+        //   });
+        // }
+        // users.push(connectionId);
         break;
       case "$disconnect":
         await broadcastMessage(users, {

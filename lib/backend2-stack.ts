@@ -39,6 +39,7 @@ export class Backend2Stack extends Stack {
         "service-role/AWSLambdaBasicExecutionRole"
       )
     );
+
     wsHandlerRole.addManagedPolicy(
       iam.ManagedPolicy.fromAwsManagedPolicyName(
         "AmazonAPIGatewayInvokeFullAccess"
@@ -73,52 +74,67 @@ export class Backend2Stack extends Stack {
       )
     );
 
-    const wsHandler = new lambda.Function(this, "WSHandler", {
-      runtime: lambda.Runtime.NODEJS_14_X,
-      code: lambda.Code.fromAsset("lambda"),
-      handler: "ws-handler.handler",
-      role: wsHandlerRole,
-    });
+    matcherRole.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName(
+        "AmazonAPIGatewayInvokeFullAccess"
+      )
+    );
 
-    const matcher = new lambda.Function(this, "matcher", {
-      runtime: lambda.Runtime.NODEJS_14_X,
-      code: lambda.Code.fromAsset("lambda"),
-      handler: "matcher.handler",
-      role: matcherRole,
-    });
-
-    const webSocketApi = new WebSocketApi(this, "tictactoe-websocket-api", {
-      connectRouteOptions: {
-        integration: new WebSocketLambdaIntegration(
-          "ConnectIntegration",
-          matcher
-        ),
-      },
-      disconnectRouteOptions: {
-        integration: new WebSocketLambdaIntegration(
-          "DisconnectIntegration",
-          wsHandler
-        ),
-      },
-      defaultRouteOptions: {
-        integration: new WebSocketLambdaIntegration(
-          "DefaultIntegration",
-          wsHandler
-        ),
-      },
-    });
-
-    webSocketApi.addRoute("broadcastMessage", {
-      integration: new WebSocketLambdaIntegration(
-        "BroadcastMessageIntegration",
-        wsHandler
-      ),
-    });
+    const webSocketApi = new WebSocketApi(this, "tictactoe-websocket-api", {});
 
     const webSocketStage = new WebSocketStage(this, "dev-stage", {
       webSocketApi,
       stageName: "dev",
       autoDeploy: true,
+    });
+
+    const wsHandler = new lambda.Function(this, "WSHandler", {
+      runtime: lambda.Runtime.NODEJS_14_X,
+      code: lambda.Code.fromAsset("lambda", { exclude: ["node_modules"] }),
+      handler: "ws-handler.handler",
+      role: wsHandlerRole,
+      timeout: Duration.seconds(10),
+      environment: {
+        wsEndpoint: webSocketStage.callbackUrl,
+      },
+    });
+
+    const matcher = new lambda.Function(this, "matcher", {
+      runtime: lambda.Runtime.NODEJS_14_X,
+      code: lambda.Code.fromAsset("lambda", { exclude: ["node_modules"] }),
+      handler: "matcher.handler",
+      role: matcherRole,
+      timeout: Duration.seconds(10),
+      environment: {
+        wsEndpoint: webSocketStage.callbackUrl,
+        queueUrl: matcherQueue.queueUrl
+      },
+    });
+
+    webSocketApi.addRoute("$connect", {
+      integration: new WebSocketLambdaIntegration(
+        "ConnectIntegration",
+        wsHandler
+      ),
+    });
+    webSocketApi.addRoute("$disconnect", {
+      integration: new WebSocketLambdaIntegration(
+        "DisconnectIntegration",
+        wsHandler
+      ),
+    });
+    webSocketApi.addRoute("$default", {
+      integration: new WebSocketLambdaIntegration(
+        "DefaultIntegration",
+        wsHandler
+      ),
+    });
+
+    webSocketApi.addRoute("requestGame", {
+      integration: new WebSocketLambdaIntegration(
+        "RequestGameIntegration",
+        matcher
+      ),
     });
 
     // const gameTable = new dynamodb.Table(this, "game-table", {

@@ -1,6 +1,7 @@
 const aws = require("aws-sdk");
 
-const endpoint = "https://45tiumvni1.execute-api.us-east-1.amazonaws.com/dev";
+const { wsEndpoint: endpoint, queueUrl } = process.env;
+
 const client = new aws.ApiGatewayManagementApi({ endpoint });
 
 const sqs = new aws.SQS();
@@ -8,10 +9,12 @@ const sqs = new aws.SQS();
 function sendMessage(connectionIds, event) {
   return Promise.all(
     connectionIds.map((id) => {
-      return client.postToConnection({
-        ConnectionId: id,
-        Data: Buffer.from(JSON.stringify({ event })),
-      });
+      return client
+        .postToConnection({
+          ConnectionId: id,
+          Data: Buffer.from(JSON.stringify({ event })),
+        })
+        .promise();
     })
   );
 }
@@ -25,8 +28,7 @@ exports.handler = async (event) => {
 
     const response = await sqs
       .receiveMessage({
-        QueueUrl:
-          "https://sqs.us-east-1.amazonaws.com/878228692056/demo-game-matching-queue-2",
+        QueueUrl: queueUrl,
         MaxNumberOfMessages: 1,
         WaitTimeSeconds: 2,
       })
@@ -41,8 +43,7 @@ exports.handler = async (event) => {
       );
       await sqs
         .deleteMessage({
-          QueueUrl:
-            "https://sqs.us-east-1.amazonaws.com/878228692056/demo-game-matching-queue-2",
+          QueueUrl: queueUrl,
           ReceiptHandle: response.Messages[0].ReceiptHandle,
         })
         .promise();
@@ -52,8 +53,7 @@ exports.handler = async (event) => {
       await sendMessage([connectionId], "WAITING");
       await sqs
         .sendMessage({
-          QueueUrl:
-            "https://sqs.us-east-1.amazonaws.com/878228692056/demo-game-matching-queue-2",
+          QueueUrl: queueUrl,
           MessageBody: connectionId,
         })
         .promise();

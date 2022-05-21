@@ -1,0 +1,7 @@
+{
+  "requestContext": {
+    "connectionId": "mock-connection-id",
+    "routeKey": "broadcastMessage"
+  },
+  "body": "{ \"message\": \"Hello, world!\" }"
+}

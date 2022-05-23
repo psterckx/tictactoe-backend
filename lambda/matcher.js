@@ -55,10 +55,45 @@ async function addConnectionToQueue(connectionId) {
     .promise();
 }
 
+async function isPlayerConnected(connectionId) {
+  const response = await ddb
+    .get({
+      TableName: gameTableName,
+      Key: {
+        pk: `connection#${connectionId}`,
+        sk: "sk",
+      },
+    })
+    .promise();
+
+  return !!response.Item;
+}
+
+async function addGameToConnections(gameId, connectionIds) {
+  await Promise.all(
+    connectionIds.map((id) => {
+      return ddb
+        .update({
+          TableName: gameTableName,
+          Key: {
+            pk: `connection#${id}`,
+            sk: "sk",
+          },
+          UpdateExpression: "SET gameId = :gameId",
+          ExpressionAttributeValues: {
+            ":gameId": gameId,
+          },
+        })
+        .promise();
+    })
+  );
+}
+
 async function createGame(gameId, players) {
   const game = {
     pk: `game#${gameId}`,
     sk: new Date().toISOString(),
+    ttl: Math.floor(Date.now() / 1000) + 60 * 60 * 24, // 1 day
     players: {
       player1: {
         connectionId: players.player1,
@@ -103,31 +138,44 @@ exports.handler = async (event) => {
     const message = await getConnectionFromQueue();
 
     if (message) {
+      // If connection IDs are the same, leave the item in the queue and return
+      if (connectionId === message.Body) return;
+
+      // check if player from queue is still connected
+      if (!(await isPlayerConnected(message.Body))) {
+        await removeConnectionFromQueue(message.ReceiptHandle);
+        await addConnectionToQueue(connectionId);
+        await sendMessage([connectionId], { event: "WAITING_FOR_GAME" });
+        return {};
+      }
+
       // start game
       console.log("START GAME");
+
       const gameId = nanoid();
       const player1 = connectionId; // X
       const player2 = message.Body; // O
       const [_, game] = await Promise.all([
         removeConnectionFromQueue(message.ReceiptHandle),
         createGame(gameId, { player1, player2 }),
+        addGameToConnections(gameId, [player1, player2]),
       ]);
       await Promise.all([
         sendMessage([player1], {
           event: "START_GAME",
           gameId,
-          ...game.state,
+          state: game.state,
           player: "player1",
           marker: "X",
         }),
         sendMessage([player2], {
           event: "START_GAME",
           gameId,
-          ...game.state,
+          state: game.state,
           player: "player2",
           marker: "O",
         }),
-      ])
+      ]);
       await sendMessage([player1], {
         event: "BEGIN_TURN",
       });
@@ -135,7 +183,7 @@ exports.handler = async (event) => {
       // add user to queue
       console.log("ADD USER TO QUEUE");
       await addConnectionToQueue(connectionId);
-      await sendMessage([connectionId], "WAITING");
+      await sendMessage([connectionId], { event: "WAITING_FOR_GAME" });
     }
   }
 

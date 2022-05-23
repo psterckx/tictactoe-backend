@@ -5,11 +5,16 @@ import {
   aws_iam as iam,
   aws_dynamodb as dynamodb,
   aws_sqs as sqs,
+  aws_cloudfront as cloudfront,
+  aws_s3 as s3,
+  aws_s3_deployment as s3Deployment,
+  aws_cloudfront_origins as origins,
   Duration,
 } from "aws-cdk-lib";
 import { WebSocketLambdaIntegration } from "@aws-cdk/aws-apigatewayv2-integrations-alpha";
-import { WebSocketApi, WebSocketStage } from "@aws-cdk/aws-apigatewayv2-alpha";
+import { WebSocketApi, WebSocketStage, ThrottleSettings } from "@aws-cdk/aws-apigatewayv2-alpha";
 import { Construct } from "constructs";
+import * as path from "path";
 
 export class Backend2Stack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -90,6 +95,10 @@ export class Backend2Stack extends Stack {
       webSocketApi,
       stageName: "dev",
       autoDeploy: true,
+      throttle: {
+        burstLimit: 10,
+        rateLimit: 20,
+      }
     });
 
     // Web Socket Game Handler
@@ -167,9 +176,38 @@ export class Backend2Stack extends Stack {
         name: "sk",
         type: dynamodb.AttributeType.STRING,
       },
+      timeToLiveAttribute: "ttl",
     });
 
     gameTable.grantReadWriteData(matcher);
     gameTable.grantReadWriteData(wsHandler);
+
+    // Frontend
+    const frontendBucket = new s3.Bucket(this, "frontendBucket", {
+      bucketName: "tictactoe-frontend",
+      accessControl: s3.BucketAccessControl.PRIVATE,
+    });
+
+    new s3Deployment.BucketDeployment(this, "frontendDeployment", {
+      sources: [
+        s3Deployment.Source.asset(
+          path.resolve(__dirname, "../../frontend/dist")
+        ),
+      ],
+      destinationBucket: frontendBucket,
+    });
+
+    const originAccessIdentity = new cloudfront.OriginAccessIdentity(
+      this,
+      "OriginAccessIdentity"
+    );
+    frontendBucket.grantRead(originAccessIdentity);
+
+    new cloudfront.Distribution(this, "tictactoeDist", {
+      defaultRootObject: "index.html",
+      defaultBehavior: {
+        origin: new origins.S3Origin(frontendBucket, { originAccessIdentity }),
+      },
+    });
   }
 }

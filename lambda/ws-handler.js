@@ -20,19 +20,6 @@ function sendMessage(connectionIds, payload) {
   );
 }
 
-/**
- * events to client
- * your turn
- * end game / win / loose
- *
- * actions from client
- * mark square
- *
- *
- * your turn => mark square => other players turn => mark square => ... => win / loose
- *
- */
-
 // const game = {
 //   pk: "gameid",
 //   sk: "start time",
@@ -105,6 +92,14 @@ function checkForWin(marker, board = []) {
   return winConditions.some((condition) => {
     return condition.every(([x, y]) => {
       return board[x][y] === marker;
+    });
+  });
+}
+
+function checkForDraw(board) {
+  return board.every((row) => {
+    return row.every((square) => {
+      return square !== "";
     });
   });
 }
@@ -226,17 +221,27 @@ async function markSquare({ gameId, connectionId, square }) {
   if (checkForWin(game.players[game.state.whosTurn].marker, game.state.board)) {
     game.state.gameOver = true;
     game.state.winner = game.state.whosTurn;
+    await updateGameWinner(game.pk, game.sk, game.state.winner);
     await sendMessage([connectionId], {
       event: "WIN",
-      ...game.state,
+      state: game.state,
     });
     const loser =
       game.players[game.state.whosTurn === "player1" ? "player2" : "player1"];
     await sendMessage([loser.connectionId], {
       event: "LOSE",
-      ...game.state,
+      state: game.state,
     });
-    await updateGameWinner(game.pk, game.sk, game.state.winner);
+    return;
+  }
+
+  if (checkForDraw(game.state.board)) {
+    game.state.gameOver = true;
+    await updateGameWinner(game.pk, game.sk, "draw");
+    await sendMessage([connectionId], {
+      event: "DRAW",
+      state: game.state,
+    });
     return;
   }
 
@@ -258,7 +263,7 @@ async function markSquare({ gameId, connectionId, square }) {
   console.log("Send updated game state to clients.");
   await sendMessage(
     [game.players.player1.connectionId, game.players.player2.connectionId],
-    { event: "GAME_UPDATED", ...game.state }
+    { event: "GAME_UPDATED", state: game.state }
   );
 
   // Send begin turn message to next player
@@ -268,10 +273,118 @@ async function markSquare({ gameId, connectionId, square }) {
   });
 }
 
+async function onConnect(connectionId) {
+  await ddb
+    .put({
+      TableName: gameTableName,
+      Item: {
+        pk: `connection#${connectionId}`,
+        sk: "sk",
+        connected: new Date().toISOString(),
+      },
+      ConditionExpression: "attribute_not_exists(pk)",
+    })
+    .promise();
+}
+
+async function onDisconnect(connectionId) {
+  // Check if connection has an active game
+  const response = await ddb
+    .get({
+      TableName: gameTableName,
+      Key: { pk: `connection#${connectionId}`, sk: "sk" },
+      AttributesToGet: ["gameId"],
+    })
+    .promise();
+
+  if (response.Item) {
+    if (response.Item.gameId) {
+      // Get the game
+      const gameResponse = await ddb
+        .query({
+          TableName: gameTableName,
+          KeyConditionExpression: "pk = :pk",
+          ExpressionAttributeValues: {
+            ":pk": `game#${response.Item.gameId}`,
+          },
+          ProjectionExpression: "players, sk, #state",
+          ExpressionAttributeNames: {
+            "#state": "state",
+          },
+        })
+        .promise();
+
+      // Send disconnect message to other player
+      const {
+        players,
+        sk,
+        state,
+      } = gameResponse.Items[0];
+
+      if (!state.gameOver) {
+        // player that disconnected
+        const disconnectedPlayer = players.player1.connectionId === connectionId
+          ? "player1"
+          : "player2";
+        const otherPlayer = disconnectedPlayer === "player1" ? "player2" : "player1"
+
+        // Update the game state
+        state.gameOver = true;
+        state.winner = otherPlayer;
+
+        await sendMessage(
+          [
+            players[
+              otherPlayer
+            ].connectionId,
+          ],
+          {
+            event: "OPPONENT_DISCONNECTED",
+            state,
+          }
+        );
+
+        // End the game
+        await ddb
+          .update({
+            TableName: gameTableName,
+            Key: {
+              pk: `game#${response.Item.gameId}`,
+              sk,
+            },
+            UpdateExpression: "SET #state.#gameOver = :gameOver, #state.#winner = :winner",
+            ExpressionAttributeNames: {
+              "#state": "state",
+              "#gameOver": "gameOver",
+              "#winner": "winner",
+            },
+            ExpressionAttributeValues: {
+              ":gameOver": true,
+              ":winner": otherPlayer,
+            },
+          })
+          .promise();
+      }
+    }
+  }
+
+  await ddb
+    .delete({
+      TableName: gameTableName,
+      Key: {
+        pk: `connection#${connectionId}`,
+        sk: "sk",
+      },
+    })
+    .promise();
+
+  console.log("CONNECTION DELETED");
+}
+
 // from client
 const actions = {
-  $connect: () => console.log("CONNECT"),
-  $disconnect: () => console.log("DISCONNECT"),
+  $connect: (connectionId, _) => onConnect(connectionId),
+  $disconnect: (connectionId, _) => onDisconnect(connectionId),
   markSquare: async (connectionId, data) =>
     await markSquare({ connectionId, ...data }),
 };

@@ -217,7 +217,6 @@ async function markSquare({ gameId, connectionId, square }) {
   game.state.board[square[0]][square[1]] =
     game.players[game.state.whosTurn].marker;
 
-  // todo - Check for a win
   if (checkForWin(game.players[game.state.whosTurn].marker, game.state.board)) {
     game.state.gameOver = true;
     game.state.winner = game.state.whosTurn;
@@ -237,11 +236,15 @@ async function markSquare({ gameId, connectionId, square }) {
 
   if (checkForDraw(game.state.board)) {
     game.state.gameOver = true;
+    game.state.winner = "draw";
     await updateGameWinner(game.pk, game.sk, "draw");
-    await sendMessage([connectionId], {
-      event: "DRAW",
-      state: game.state,
-    });
+    await sendMessage(
+      [game.players.player1.connectionId, game.players.player2.connectionId],
+      {
+        event: "DRAW",
+        state: game.state,
+      }
+    );
     return;
   }
 
@@ -285,6 +288,27 @@ async function onConnect(connectionId) {
       ConditionExpression: "attribute_not_exists(pk)",
     })
     .promise();
+
+  const {
+    Attributes: { n },
+  } = await ddb
+    .update({
+      TableName: gameTableName,
+      Key: {
+        pk: "connections",
+        sk: "sk",
+      },
+      UpdateExpression: "SET #n = if_not_exists(#n, :start) + :increment",
+      ExpressionAttributeNames: {
+        "#n": "n",
+      },
+      ExpressionAttributeValues: {
+        ":increment": 1,
+        ":start": 0,
+      },
+      ReturnValues: "UPDATED_NEW",
+    })
+    .promise();
 }
 
 async function onDisconnect(connectionId) {
@@ -315,34 +339,23 @@ async function onDisconnect(connectionId) {
         .promise();
 
       // Send disconnect message to other player
-      const {
-        players,
-        sk,
-        state,
-      } = gameResponse.Items[0];
+      const { players, sk, state } = gameResponse.Items[0];
 
       if (!state.gameOver) {
         // player that disconnected
-        const disconnectedPlayer = players.player1.connectionId === connectionId
-          ? "player1"
-          : "player2";
-        const otherPlayer = disconnectedPlayer === "player1" ? "player2" : "player1"
+        const disconnectedPlayer =
+          players.player1.connectionId === connectionId ? "player1" : "player2";
+        const otherPlayer =
+          disconnectedPlayer === "player1" ? "player2" : "player1";
 
         // Update the game state
         state.gameOver = true;
         state.winner = otherPlayer;
 
-        await sendMessage(
-          [
-            players[
-              otherPlayer
-            ].connectionId,
-          ],
-          {
-            event: "OPPONENT_DISCONNECTED",
-            state,
-          }
-        );
+        await sendMessage([players[otherPlayer].connectionId], {
+          event: "OPPONENT_DISCONNECTED",
+          state,
+        });
 
         // End the game
         await ddb
@@ -352,7 +365,8 @@ async function onDisconnect(connectionId) {
               pk: `game#${response.Item.gameId}`,
               sk,
             },
-            UpdateExpression: "SET #state.#gameOver = :gameOver, #state.#winner = :winner",
+            UpdateExpression:
+              "SET #state.#gameOver = :gameOver, #state.#winner = :winner",
             ExpressionAttributeNames: {
               "#state": "state",
               "#gameOver": "gameOver",
@@ -367,6 +381,25 @@ async function onDisconnect(connectionId) {
       }
     }
   }
+
+  await ddb
+    .update({
+      TableName: gameTableName,
+      Key: {
+        pk: "connections",
+        sk: "sk",
+      },
+      UpdateExpression: "SET #n = if_not_exists(#n, :start) - :decrement",
+      ExpressionAttributeNames: {
+        "#n": "n",
+      },
+      ExpressionAttributeValues: {
+        ":decrement": 1,
+        ":start": 0,
+      },
+      ReturnValues: "UPDATED_NEW",
+    })
+    .promise();
 
   await ddb
     .delete({

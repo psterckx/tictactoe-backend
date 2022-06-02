@@ -208,6 +208,7 @@ export class Backend2Stack extends Stack {
       defaultBehavior: {
         origin: new origins.S3Origin(frontendBucket, { originAccessIdentity }),
       },
+      domainNames: ['tictactoe.psterckx.be']
     });
   }
 }

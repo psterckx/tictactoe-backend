@@ -126,8 +126,6 @@ async function createGame(gameId, players) {
   return game;
 }
 
-// ! Assumption: users will not disconnect while they are in the queue waiting for a game
-
 exports.handler = async (event) => {
   if (event.requestContext) {
     const connectionId = event.requestContext.connectionId;

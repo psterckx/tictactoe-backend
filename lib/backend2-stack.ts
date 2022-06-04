@@ -9,10 +9,13 @@ import {
   aws_s3 as s3,
   aws_s3_deployment as s3Deployment,
   aws_cloudfront_origins as origins,
+  aws_certificatemanager as certManager,
+  aws_route53 as route53,
+  aws_route53_targets as targets,
   Duration,
 } from "aws-cdk-lib";
 import { WebSocketLambdaIntegration } from "@aws-cdk/aws-apigatewayv2-integrations-alpha";
-import { WebSocketApi, WebSocketStage, ThrottleSettings } from "@aws-cdk/aws-apigatewayv2-alpha";
+import { WebSocketApi, WebSocketStage } from "@aws-cdk/aws-apigatewayv2-alpha";
 import { Construct } from "constructs";
 import * as path from "path";
 
@@ -203,12 +206,29 @@ export class Backend2Stack extends Stack {
     );
     frontendBucket.grantRead(originAccessIdentity);
 
-    new cloudfront.Distribution(this, "tictactoeDist", {
+    const hostedZone = route53.HostedZone.fromLookup(this, "hostedZone", {
+      domainName: "psterckx.be",
+    })
+
+    const certificate = new certManager.Certificate(this, 'certificate', {
+      domainName: 'tictactoe.psterckx.be',
+      validation: certManager.CertificateValidation.fromDns(hostedZone),
+    })
+
+    const distribution = new cloudfront.Distribution(this, "tictactoeDist", {
       defaultRootObject: "index.html",
       defaultBehavior: {
         origin: new origins.S3Origin(frontendBucket, { originAccessIdentity }),
       },
+      certificate,
       domainNames: ['tictactoe.psterckx.be']
     });
+
+    new route53.RecordSet(this, "tictactoeRecordSet", {
+      recordType: route53.RecordType.A,
+      zone: hostedZone,
+      target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(distribution)),
+      recordName: 'tictactoe.psterckx.be',
+    })
   }
 }

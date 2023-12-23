@@ -44,6 +44,8 @@ async function removeConnectionFromQueue(receiptHandle) {
       ReceiptHandle: receiptHandle,
     })
     .promise();
+
+    // can edit!
 }
 
 async function addConnectionToQueue(connectionId) {
